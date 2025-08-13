@@ -3,7 +3,6 @@ from sentence_transformers import SentenceTransformer, util
 from openai import OpenAI
 import pdfplumber
 import docx
-import difflib
 import re
 import pandas as pd
 
@@ -73,39 +72,8 @@ def highlight_glossary_terms(text, terms, color="#ADD8E6"):
         text = pattern.sub(replacer, text)
     return text
 
-def highlight_differences(text1, text2):
-    """
-    Highlights similar terms in green and different terms in red.
-    Uses difflib.SequenceMatcher on word tokens.
-    Returns HTML string with colored spans.
-    """
-    def tokenize(text):
-        return re.findall(r"\w+|[^\w\s]", text, re.UNICODE)
-
-    tokens1 = tokenize(text1)
-    tokens2 = tokenize(text2)
-
-    matcher = difflib.SequenceMatcher(None, tokens1, tokens2)
-    highlighted_text = []
-
-    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-        if tag == 'equal':
-            for token in tokens1[i1:i2]:
-                highlighted_text.append(f'<span style="background-color:#d4fcdc">{token}</span>')
-        elif tag == 'replace' or tag == 'delete':
-            for token in tokens1[i1:i2]:
-                highlighted_text.append(f'<span style="background-color:#fcdcdc">{token}</span>')
-        elif tag == 'insert':
-            pass
-        if i2 > i1:
-            last_token = tokens1[i2-1]
-            if re.match(r"\w", last_token):
-                highlighted_text.append(" ")
-
-    return "".join(highlighted_text).strip()
-
 def main():
-    st.title("Page-Level Translation Quality Checker with Glossary")
+    st.title("Page-Level Translation Quality Checker with Glossary Highlighting")
 
     openai_api_key = st.text_input("Enter OpenAI API key", type="password")
     client = None
@@ -171,35 +139,30 @@ def main():
 
         source_emb = embed_text(embedder, [source_page_text])
 
+        # Highlight source terms in source page
+        highlighted_source = highlight_glossary_terms(source_page_text, glossary_source_terms, color="#ADD8E6")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown(f"### Source page [{page_index}] with source glossary terms highlighted:")
+            st.markdown(highlighted_source, unsafe_allow_html=True)
+
         for name, pages in translations.items():
-            st.markdown(f"### Translation: {name}")
             translation_emb = embed_text(embedder, pages)
             hits = semantic_search(source_emb, translation_emb, top_k=1)
             best_hit = hits[0]
             best_page_text = pages[best_hit['corpus_id']]
             similarity = best_hit['score']
 
-            st.write(f"Most similar page (similarity score: {similarity:.3f}):")
-
-            # Highlight differences first
-            highlighted_source = highlight_differences(source_page_text, best_page_text)
-            highlighted_translation = highlight_differences(best_page_text, source_page_text)
-
-            # Highlight glossary terms in blue on top of difference highlights
-            if glossary_source_terms:
-                highlighted_source = highlight_glossary_terms(highlighted_source, glossary_source_terms, color="#ADD8E6")
-            if glossary_translation_terms:
-                highlighted_translation = highlight_glossary_terms(highlighted_translation, glossary_translation_terms, color="#ADD8E6")
-
-            col1, col2 = st.columns(2)
-
-            with col1:
-                st.markdown(f"### Source page [{page_index}]:")
-                st.markdown(highlighted_source, unsafe_allow_html=True)
+            # Highlight translation terms in translation page
+            highlighted_translation = highlight_glossary_terms(best_page_text, glossary_translation_terms, color="#ADD8E6")
 
             with col2:
-                st.markdown(f"### Translation page [{best_hit['corpus_id'] + 1}]:")
+                st.markdown(f"### Benchmark page [{page_index}] & Translation: {name}")
+                st.markdown(f"### Most similar translation page [{best_hit['corpus_id'] + 1}] with translation glossary terms highlighted:")
                 st.markdown(highlighted_translation, unsafe_allow_html=True)
+                st.write(f"Similarity score: {similarity:.3f}")
 
             if client:
                 with st.spinner("Evaluating translation quality..."):
