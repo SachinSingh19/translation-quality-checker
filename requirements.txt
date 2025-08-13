@@ -3,4 +3,3 @@ sentence-transformers
 openai
 pdfplumber
 python-docx
-difflib3
