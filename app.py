@@ -198,4 +198,16 @@ def main():
                 st.markdown(highlighted_source, unsafe_allow_html=True)
 
             with col2:
-                st.mark
+                st.markdown(f"### Translation page [{best_hit['corpus_id'] + 1}]:")
+                st.markdown(highlighted_translation, unsafe_allow_html=True)
+
+            if client:
+                with st.spinner("Evaluating translation quality..."):
+                    assessment = openai_quality_assessment(client, source_page_text, best_page_text)
+                st.markdown("**Quality Assessment:**")
+                st.write(assessment)
+            else:
+                st.info("OpenAI API key not provided. Showing similarity scores only.")
+
+if __name__ == "__main__":
+    main()
