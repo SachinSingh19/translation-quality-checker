@@ -4,12 +4,12 @@ import openai
 import os
 import PyPDF2
 import docx
+import re
 
-MODEL_PATH = "models/all-MiniLM-L6-v2"
-
+# Load model from Hugging Face (will download automatically)
 @st.cache_resource(show_spinner=True)
 def load_model():
-    return SentenceTransformer(MODEL_PATH)
+    return SentenceTransformer('all-MiniLM-L6-v2')
 
 def read_pdf(file):
     reader = PyPDF2.PdfReader(file)
@@ -32,7 +32,6 @@ def read_file(file):
         return file.getvalue().decode("utf-8")
 
 def chunk_text(text, chunk_size=200):
-    import re
     sentences = re.split(r'(?<=[.!?]) +', text)
     chunks = []
     current_chunk = ""
@@ -54,9 +53,11 @@ def semantic_search(source_embedding, target_embeddings, top_k=1):
     return hits[0]
 
 def openai_quality_assessment(source_text, translation_text):
+    if not openai.api_key:
+        return "OpenAI API key not provided. Skipping quality assessment."
     prompt = f"""
     You are a translation quality evaluator.
-    Source text (French): "{source_text}"
+    Source text (English): "{source_text}"
     Translation: "{translation_text}"
     Please provide a brief evaluation of the translation quality, highlighting any errors or issues.
     """
@@ -69,28 +70,28 @@ def openai_quality_assessment(source_text, translation_text):
     return response['choices'][0]['message']['content']
 
 def main():
-    st.title("Translation Quality Checker")
+    st.title("English Translation Quality Checker")
 
-    openai_api_key = st.text_input("Enter your OpenAI API key", type="password")
+    openai_api_key = st.text_input("Enter your OpenAI API key (optional)", type="password")
     if openai_api_key:
         openai.api_key = openai_api_key
 
     embedder = load_model()
 
-    source_file = st.file_uploader("Upload French source document (PDF, DOCX, TXT)", type=["pdf", "docx", "txt"])
+    source_file = st.file_uploader("Upload English source document (PDF, DOCX, TXT)", type=["pdf", "docx", "txt"])
     if source_file:
         source_text = read_file(source_file)
         source_chunks = chunk_text(source_text)
         st.success(f"Source document loaded with {len(source_chunks)} chunks.")
 
-        translation_files = st.file_uploader("Upload translation files (multiple allowed)", type=["pdf", "docx", "txt"], accept_multiple_files=True)
+        translation_files = st.file_uploader("Upload translation documents (multiple allowed)", type=["pdf", "docx", "txt"], accept_multiple_files=True)
         if translation_files:
             translations = {}
             for file in translation_files:
                 text = read_file(file)
                 chunks = chunk_text(text)
                 translations[file.name] = chunks
-            st.success(f"Loaded {len(translations)} translations.")
+            st.success(f"Loaded {len(translations)} translation documents.")
 
             chunk_index = st.number_input(f"Select source chunk index (0 to {len(source_chunks)-1})", min_value=0, max_value=len(source_chunks)-1, value=0)
             source_chunk = source_chunks[chunk_index]
@@ -106,7 +107,7 @@ def main():
                 best_hit = hits[0]
                 best_chunk = chunks[best_hit['corpus_id']]
                 similarity = best_hit['score']
-                st.write(f"Most similar chunk (score: {similarity:.3f}):")
+                st.write(f"Most similar chunk (similarity score: {similarity:.3f}):")
                 st.write(best_chunk)
 
                 if openai_api_key:
@@ -115,7 +116,7 @@ def main():
                     st.markdown("**Quality Assessment:**")
                     st.write(assessment)
                 else:
-                    st.warning("Enter OpenAI API key to get quality assessment.")
+                    st.info("Enter OpenAI API key to get quality assessment.")
 
 if __name__ == "__main__":
     main()
