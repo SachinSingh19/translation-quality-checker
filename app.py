@@ -1,6 +1,6 @@
 import streamlit as st
 from sentence_transformers import SentenceTransformer, util
-import openai
+from openai import OpenAI
 import PyPDF2
 import docx
 import difflib
@@ -43,22 +43,20 @@ def semantic_search(source_embedding, target_embeddings, top_k=1):
     hits = util.semantic_search(source_embedding, target_embeddings, top_k=top_k)
     return hits[0]
 
-def openai_quality_assessment(source_text, translation_text):
-    if not openai.api_key:
-        return "OpenAI API key not provided. Skipping quality assessment."
+def openai_quality_assessment(client, source_text, translation_text):
     prompt = f"""
 You are a translation quality evaluator.
 Source page text: "{source_text}"
 Translation page text: "{translation_text}"
 Please provide a brief evaluation of the translation quality, highlighting any errors or issues.
 """
-    response = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",
-        messages=[{"role":"user", "content": prompt}],
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",  # or "gpt-3.5-turbo"
+        messages=[{"role": "user", "content": prompt}],
         max_tokens=150,
         temperature=0.5,
     )
-    return response['choices'][0]['message']['content']
+    return response.choices[0].message.content
 
 def highlight_differences(text1, text2):
     """
@@ -66,7 +64,6 @@ def highlight_differences(text1, text2):
     Uses difflib.SequenceMatcher on word tokens.
     Returns HTML string with colored spans.
     """
-    # Tokenize by words including punctuation
     def tokenize(text):
         return re.findall(r"\w+|[^\w\s]", text, re.UNICODE)
 
@@ -78,15 +75,13 @@ def highlight_differences(text1, text2):
 
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == 'equal':
-            # Similar terms - green
             for token in tokens1[i1:i2]:
                 highlighted_text.append(f'<span style="background-color:#d4fcdc">{token}</span>')
         elif tag == 'replace' or tag == 'delete':
-            # Different terms in source - red
             for token in tokens1[i1:i2]:
                 highlighted_text.append(f'<span style="background-color:#fcdcdc">{token}</span>')
         elif tag == 'insert':
-            # Insertions in translation - ignore here or could highlight differently
+            # Insertions in translation ignored here
             pass
         # Add space after each token except punctuation
         if i2 > i1:
@@ -100,8 +95,9 @@ def main():
     st.title("Page-Level Translation Quality Checker")
 
     openai_api_key = st.text_input("Enter your OpenAI API key (optional)", type="password")
+    client = None
     if openai_api_key:
-        openai.api_key = openai_api_key
+        client = OpenAI(api_key=openai_api_key)
 
     embedder = load_model()
 
@@ -120,8 +116,6 @@ def main():
 
             page_index = st.number_input(f"Select benchmark page number (1 to {len(source_pages)})", min_value=1, max_value=len(source_pages), value=1)
             source_page_text = source_pages[page_index - 1]
-            st.markdown(f"### Benchmark page [{page_index}]:")
-            st.write(source_page_text)
 
             source_emb = embed_text(embedder, [source_page_text])
 
@@ -132,15 +126,25 @@ def main():
                 best_hit = hits[0]
                 best_page_text = pages[best_hit['corpus_id']]
                 similarity = best_hit['score']
+
                 st.write(f"Most similar page (similarity score: {similarity:.3f}):")
 
-                # Highlight differences
-                highlighted_html = highlight_differences(source_page_text, best_page_text)
-                st.markdown(highlighted_html, unsafe_allow_html=True)
+                highlighted_source = highlight_differences(source_page_text, best_page_text)
+                highlighted_translation = highlight_differences(best_page_text, source_page_text)
 
-                if openai_api_key:
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    st.markdown(f"### Benchmark page [{page_index}]:")
+                    st.markdown(highlighted_source, unsafe_allow_html=True)
+
+                with col2:
+                    st.markdown(f"### Translation page [{best_hit['corpus_id'] + 1}]:")
+                    st.markdown(highlighted_translation, unsafe_allow_html=True)
+
+                if client:
                     with st.spinner("Evaluating translation quality..."):
-                        assessment = openai_quality_assessment(source_page_text, best_page_text)
+                        assessment = openai_quality_assessment(client, source_page_text, best_page_text)
                     st.markdown("**Quality Assessment:**")
                     st.write(assessment)
                 else:
