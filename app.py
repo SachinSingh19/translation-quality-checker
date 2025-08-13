@@ -95,7 +95,7 @@ def highlight_differences(text1, text2):
 def main():
     st.title("Page-Level Translation Quality Checker")
 
-    openai_api_key = st.text_input("Enter API key, type="password")
+    openai_api_key = st.text_input("Enter API key", type="password")
     client = None
     if openai_api_key:
         client = OpenAI(api_key=openai_api_key)
