@@ -3,3 +3,4 @@ sentence-transformers
 openai
 pdfplumber
 python-docx
+openpyxl
