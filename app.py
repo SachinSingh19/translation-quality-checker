@@ -54,9 +54,10 @@ Please provide a brief evaluation of the translation quality, highlighting any e
         model="gpt-4o-mini",  # or "gpt-3.5-turbo"
         messages=[{"role": "user", "content": prompt}],
         max_tokens=150,
-        temperature=0.5,
-    )
-    return response.choices[0].message.content
+        temperature=0.5, 
+)
+    # Updated for new API structure
+    return response.choices[0].message["content"]
 
 def highlight_differences(text1, text2):
     """
@@ -94,7 +95,7 @@ def highlight_differences(text1, text2):
 def main():
     st.title("Page-Level Translation Quality Checker")
 
-    openai_api_key = st.text_input("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", type="password")
+    openai_api_key = st.text_input("Enter API key, type="password")
     client = None
     if openai_api_key:
         client = OpenAI(api_key=openai_api_key)
