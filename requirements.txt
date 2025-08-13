@@ -1,3 +1,5 @@
 streamlit
-requests
-numpy
+sentence-transformers
+openai
+PyPDF2
+python-docx
