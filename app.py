@@ -1,7 +1,7 @@
 import streamlit as st
 from sentence_transformers import SentenceTransformer, util
 from openai import OpenAI
-import PyPDF2
+import pdfplumber
 import docx
 import difflib
 import re
@@ -12,11 +12,11 @@ def load_model():
     return SentenceTransformer('all-MiniLM-L6-v2')
 
 def read_pdf_pages(file):
-    reader = PyPDF2.PdfReader(file)
     pages = []
-    for page in reader.pages:
-        text = page.extract_text()
-        pages.append(text if text else "")
+    with pdfplumber.open(file) as pdf:
+        for page in pdf.pages:
+            text = page.extract_text()
+            pages.append(text if text else "")
     return pages
 
 def read_docx_pages(file):
