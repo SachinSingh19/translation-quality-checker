@@ -3,6 +3,8 @@ from sentence_transformers import SentenceTransformer, util
 import openai
 import PyPDF2
 import docx
+import difflib
+import re
 
 # Load model
 @st.cache_resource(show_spinner=True)
@@ -45,11 +47,11 @@ def openai_quality_assessment(source_text, translation_text):
     if not openai.api_key:
         return "OpenAI API key not provided. Skipping quality assessment."
     prompt = f"""
-    You are a translation quality evaluator.
-    Source page text: "{source_text}"
-    Translation page text: "{translation_text}"
-    Please provide a brief evaluation of the translation quality, highlighting any errors or issues.
-    """
+You are a translation quality evaluator.
+Source page text: "{source_text}"
+Translation page text: "{translation_text}"
+Please provide a brief evaluation of the translation quality, highlighting any errors or issues.
+"""
     response = openai.ChatCompletion.create(
         model="gpt-3.5-turbo",
         messages=[{"role":"user", "content": prompt}],
@@ -57,6 +59,42 @@ def openai_quality_assessment(source_text, translation_text):
         temperature=0.5,
     )
     return response['choices'][0]['message']['content']
+
+def highlight_differences(text1, text2):
+    """
+    Highlights similar terms in green and different terms in red.
+    Uses difflib.SequenceMatcher on word tokens.
+    Returns HTML string with colored spans.
+    """
+    # Tokenize by words including punctuation
+    def tokenize(text):
+        return re.findall(r"\w+|[^\w\s]", text, re.UNICODE)
+
+    tokens1 = tokenize(text1)
+    tokens2 = tokenize(text2)
+
+    matcher = difflib.SequenceMatcher(None, tokens1, tokens2)
+    highlighted_text = []
+
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == 'equal':
+            # Similar terms - green
+            for token in tokens1[i1:i2]:
+                highlighted_text.append(f'<span style="background-color:#d4fcdc">{token}</span>')
+        elif tag == 'replace' or tag == 'delete':
+            # Different terms in source - red
+            for token in tokens1[i1:i2]:
+                highlighted_text.append(f'<span style="background-color:#fcdcdc">{token}</span>')
+        elif tag == 'insert':
+            # Insertions in translation - ignore here or could highlight differently
+            pass
+        # Add space after each token except punctuation
+        if i2 > i1:
+            last_token = tokens1[i2-1]
+            if re.match(r"\w", last_token):
+                highlighted_text.append(" ")
+
+    return "".join(highlighted_text).strip()
 
 def main():
     st.title("Page-Level Translation Quality Checker")
@@ -67,10 +105,10 @@ def main():
 
     embedder = load_model()
 
-    source_file = st.file_uploader("Upload English source document (PDF, DOCX, TXT)", type=["pdf", "docx", "txt"])
+    source_file = st.file_uploader("Upload Benchmark document (PDF, DOCX, TXT)", type=["pdf", "docx", "txt"])
     if source_file:
         source_pages = read_file_pages(source_file)
-        st.success(f"Source document loaded with {len(source_pages)} pages.")
+        st.success(f"Benchmark document loaded with {len(source_pages)} pages.")
 
         translation_files = st.file_uploader("Upload translation documents (multiple allowed)", type=["pdf", "docx", "txt"], accept_multiple_files=True)
         if translation_files:
@@ -80,9 +118,9 @@ def main():
                 translations[file.name] = pages
             st.success(f"Loaded {len(translations)} translation documents.")
 
-            page_index = st.number_input(f"Select source page number (1 to {len(source_pages)})", min_value=1, max_value=len(source_pages), value=1)
+            page_index = st.number_input(f"Select benchmark page number (1 to {len(source_pages)})", min_value=1, max_value=len(source_pages), value=1)
             source_page_text = source_pages[page_index - 1]
-            st.markdown(f"### Source page [{page_index}]:")
+            st.markdown(f"### Benchmark page [{page_index}]:")
             st.write(source_page_text)
 
             source_emb = embed_text(embedder, [source_page_text])
@@ -95,7 +133,10 @@ def main():
                 best_page_text = pages[best_hit['corpus_id']]
                 similarity = best_hit['score']
                 st.write(f"Most similar page (similarity score: {similarity:.3f}):")
-                st.write(best_page_text)
+
+                # Highlight differences
+                highlighted_html = highlight_differences(source_page_text, best_page_text)
+                st.markdown(highlighted_html, unsafe_allow_html=True)
 
                 if openai_api_key:
                     with st.spinner("Evaluating translation quality..."):
