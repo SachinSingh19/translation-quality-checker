@@ -3,3 +3,5 @@ sentence-transformers
 openai
 PyPDF2
 python-docx
+pip install streamlit sentence-transformers openai pdfplumber python-docx
+pdfplumber
