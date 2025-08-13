@@ -1,49 +1,38 @@
 import streamlit as st
 from sentence_transformers import SentenceTransformer, util
 import openai
-import os
 import PyPDF2
 import docx
-import re
 
-# Load model from Hugging Face (will download automatically)
+# Load model
 @st.cache_resource(show_spinner=True)
 def load_model():
     return SentenceTransformer('all-MiniLM-L6-v2')
 
-def read_pdf(file):
+def read_pdf_pages(file):
     reader = PyPDF2.PdfReader(file)
-    text = ""
+    pages = []
     for page in reader.pages:
-        text += page.extract_text() + "\n"
-    return text
+        text = page.extract_text()
+        pages.append(text if text else "")
+    return pages
 
-def read_docx(file):
+def read_docx_pages(file):
     doc = docx.Document(file)
-    text = "\n".join([para.text for para in doc.paragraphs])
-    return text
+    paragraphs = [para.text for para in doc.paragraphs if para.text.strip() != ""]
+    return ["\n".join(paragraphs)]  # Treat whole doc as one page
 
-def read_file(file):
+def read_txt_pages(file):
+    text = file.getvalue().decode("utf-8")
+    return [text]  # Treat whole txt as one page
+
+def read_file_pages(file):
     if file.type == "application/pdf":
-        return read_pdf(file)
+        return read_pdf_pages(file)
     elif file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-        return read_docx(file)
+        return read_docx_pages(file)
     else:
-        return file.getvalue().decode("utf-8")
-
-def chunk_text(text, chunk_size=200):
-    sentences = re.split(r'(?<=[.!?]) +', text)
-    chunks = []
-    current_chunk = ""
-    for sentence in sentences:
-        if len(current_chunk) + len(sentence) < chunk_size:
-            current_chunk += " " + sentence
-        else:
-            chunks.append(current_chunk.strip())
-            current_chunk = sentence
-    if current_chunk:
-        chunks.append(current_chunk.strip())
-    return chunks
+        return read_txt_pages(file)
 
 def embed_text(embedder, texts):
     return embedder.encode(texts, convert_to_tensor=True)
@@ -57,8 +46,8 @@ def openai_quality_assessment(source_text, translation_text):
         return "OpenAI API key not provided. Skipping quality assessment."
     prompt = f"""
     You are a translation quality evaluator.
-    Source text (English): "{source_text}"
-    Translation: "{translation_text}"
+    Source page text: "{source_text}"
+    Translation page text: "{translation_text}"
     Please provide a brief evaluation of the translation quality, highlighting any errors or issues.
     """
     response = openai.ChatCompletion.create(
@@ -70,7 +59,7 @@ def openai_quality_assessment(source_text, translation_text):
     return response['choices'][0]['message']['content']
 
 def main():
-    st.title("English Translation Quality Checker")
+    st.title("Page-Level Translation Quality Checker")
 
     openai_api_key = st.text_input("Enter your OpenAI API key (optional)", type="password")
     if openai_api_key:
@@ -80,43 +69,41 @@ def main():
 
     source_file = st.file_uploader("Upload English source document (PDF, DOCX, TXT)", type=["pdf", "docx", "txt"])
     if source_file:
-        source_text = read_file(source_file)
-        source_chunks = chunk_text(source_text)
-        st.success(f"Source document loaded with {len(source_chunks)} chunks.")
+        source_pages = read_file_pages(source_file)
+        st.success(f"Source document loaded with {len(source_pages)} pages.")
 
         translation_files = st.file_uploader("Upload translation documents (multiple allowed)", type=["pdf", "docx", "txt"], accept_multiple_files=True)
         if translation_files:
             translations = {}
             for file in translation_files:
-                text = read_file(file)
-                chunks = chunk_text(text)
-                translations[file.name] = chunks
+                pages = read_file_pages(file)
+                translations[file.name] = pages
             st.success(f"Loaded {len(translations)} translation documents.")
 
-            chunk_index = st.number_input(f"Select source chunk index (0 to {len(source_chunks)-1})", min_value=0, max_value=len(source_chunks)-1, value=0)
-            source_chunk = source_chunks[chunk_index]
-            st.markdown(f"### Source chunk [{chunk_index}]:")
-            st.write(source_chunk)
+            page_index = st.number_input(f"Select source page number (1 to {len(source_pages)})", min_value=1, max_value=len(source_pages), value=1)
+            source_page_text = source_pages[page_index - 1]
+            st.markdown(f"### Source page [{page_index}]:")
+            st.write(source_page_text)
 
-            source_emb = embed_text(embedder, [source_chunk])
+            source_emb = embed_text(embedder, [source_page_text])
 
-            for name, chunks in translations.items():
+            for name, pages in translations.items():
                 st.markdown(f"### Translation: {name}")
-                translation_emb = embed_text(embedder, chunks)
+                translation_emb = embed_text(embedder, pages)
                 hits = semantic_search(source_emb, translation_emb, top_k=1)
                 best_hit = hits[0]
-                best_chunk = chunks[best_hit['corpus_id']]
+                best_page_text = pages[best_hit['corpus_id']]
                 similarity = best_hit['score']
-                st.write(f"Most similar chunk (similarity score: {similarity:.3f}):")
-                st.write(best_chunk)
+                st.write(f"Most similar page (similarity score: {similarity:.3f}):")
+                st.write(best_page_text)
 
                 if openai_api_key:
                     with st.spinner("Evaluating translation quality..."):
-                        assessment = openai_quality_assessment(source_chunk, best_chunk)
+                        assessment = openai_quality_assessment(source_page_text, best_page_text)
                     st.markdown("**Quality Assessment:**")
                     st.write(assessment)
                 else:
-                    st.info("Enter OpenAI API key to get quality assessment.")
+                    st.info("OpenAI API key not provided. Showing similarity scores only.")
 
 if __name__ == "__main__":
     main()
