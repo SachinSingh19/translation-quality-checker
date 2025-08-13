@@ -3,8 +3,8 @@ from sentence_transformers import SentenceTransformer, util
 from openai import OpenAI
 import pdfplumber
 import docx
+import difflib
 import re
-import pandas as pd
 
 # Load model
 @st.cache_resource(show_spinner=True)
@@ -54,123 +54,102 @@ Please provide a brief evaluation of the translation quality, highlighting any e
         model="gpt-4o-mini",  # or "gpt-3.5-turbo"
         messages=[{"role": "user", "content": prompt}],
         max_tokens=150,
-        temperature=0.5,
-    )
+        temperature=0.5, 
+)
+    # Updated for new API structure
     return response.choices[0].message["content"]
 
-def highlight_glossary_terms(text, terms, color="#ADD8E6"):
+def highlight_differences(text1, text2):
     """
-    Highlight all occurrences of glossary terms in the text with the given color.
-    Case-insensitive whole word matching.
+    Highlights similar terms in green and different terms in red.
+    Uses difflib.SequenceMatcher on word tokens.
+    Returns HTML string with colored spans.
     """
-    def replacer(match):
-        return f'<span style="background-color:{color};">{match.group(0)}</span>'
+    def tokenize(text):
+        return re.findall(r"\w+|[^\w\s]", text, re.UNICODE)
 
-    sorted_terms = sorted(terms, key=len, reverse=True)
-    for term in sorted_terms:
-        pattern = re.compile(r'\b' + re.escape(term) + r'\b', flags=re.IGNORECASE)
-        text = pattern.sub(replacer, text)
-    return text
+    tokens1 = tokenize(text1)
+    tokens2 = tokenize(text2)
+
+    matcher = difflib.SequenceMatcher(None, tokens1, tokens2)
+    highlighted_text = []
+
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == 'equal':
+            for token in tokens1[i1:i2]:
+                highlighted_text.append(f'<span style="background-color:#d4fcdc">{token}</span>')
+        elif tag == 'replace' or tag == 'delete':
+            for token in tokens1[i1:i2]:
+                highlighted_text.append(f'<span style="background-color:#fcdcdc">{token}</span>')
+        elif tag == 'insert':
+            # Insertions in translation ignored here
+            pass
+        # Add space after each token except punctuation
+        if i2 > i1:
+            last_token = tokens1[i2-1]
+            if re.match(r"\w", last_token):
+                highlighted_text.append(" ")
+
+    return "".join(highlighted_text).strip()
 
 def main():
-    st.title("Page-Level Translation Quality Checker with Glossary Highlighting")
+    st.title("Page-Level Translation Quality Checker")
 
-    openai_api_key = st.text_input("Enter OpenAI API key", type="password")
+    openai_api_key = st.text_input("Enter API key", type="password")
     client = None
     if openai_api_key:
         client = OpenAI(api_key=openai_api_key)
 
     embedder = load_model()
 
-    st.markdown("### Upload Files")
-    glossary_file = st.file_uploader("Upload optional glossary Excel file (with 'source' and 'translation' columns)", type=["xlsx"])
-    benchmark_file = st.file_uploader("Upload Benchmark document (any language) (PDF, DOCX, TXT)", type=["pdf", "docx", "txt"])
-    source_lang_file = st.file_uploader("Upload optional Source language document (PDF, DOCX, TXT)", type=["pdf", "docx", "txt"])
-    translation_files = st.file_uploader("Upload translation documents (multiple allowed)", type=["pdf", "docx", "txt"], accept_multiple_files=True)
+    source_file = st.file_uploader("Upload Benchmark document (PDF, DOCX, TXT)", type=["pdf", "docx", "txt"])
+    if source_file:
+        source_pages = read_file_pages(source_file)
+        st.success(f"Benchmark document loaded with {len(source_pages)} pages.")
 
-    glossary_source_terms = []
-    glossary_translation_terms = []
+        translation_files = st.file_uploader("Upload translation documents (multiple allowed)", type=["pdf", "docx", "txt"], accept_multiple_files=True)
+        if translation_files:
+            translations = {}
+            for file in translation_files:
+                pages = read_file_pages(file)
+                translations[file.name] = pages
+            st.success(f"Loaded {len(translations)} translation documents.")
 
-    if glossary_file:
-        try:
-            df_glossary = pd.read_excel(glossary_file, engine='openpyxl')
-            if 'source' in df_glossary.columns and 'translation' in df_glossary.columns:
-                glossary_source_terms = df_glossary['source'].dropna().astype(str).tolist()
-                glossary_translation_terms = df_glossary['translation'].dropna().astype(str).tolist()
-                st.success(f"Loaded glossary with {len(glossary_source_terms)} source terms and {len(glossary_translation_terms)} translation terms.")
-            else:
-                st.error("Glossary file must contain 'source' and 'translation' columns.")
-        except Exception as e:
-            st.error(f"Failed to read glossary file: {e}")
+            page_index = st.number_input(f"Select benchmark page number (1 to {len(source_pages)})", min_value=1, max_value=len(source_pages), value=1)
+            source_page_text = source_pages[page_index - 1]
 
-    if benchmark_file:
-        benchmark_pages = read_file_pages(benchmark_file)
-        st.success(f"Benchmark document loaded with {len(benchmark_pages)} pages.")
-    else:
-        benchmark_pages = []
+            source_emb = embed_text(embedder, [source_page_text])
 
-    if source_lang_file:
-        source_lang_pages = read_file_pages(source_lang_file)
-        st.success(f"Source language document loaded with {len(source_lang_pages)} pages.")
-    else:
-        source_lang_pages = []
+            for name, pages in translations.items():
+                st.markdown(f"### Translation: {name}")
+                translation_emb = embed_text(embedder, pages)
+                hits = semantic_search(source_emb, translation_emb, top_k=1)
+                best_hit = hits[0]
+                best_page_text = pages[best_hit['corpus_id']]
+                similarity = best_hit['score']
 
-    if translation_files:
-        translations = {}
-        for file in translation_files:
-            pages = read_file_pages(file)
-            translations[file.name] = pages
-        st.success(f"Loaded {len(translations)} translation documents.")
-    else:
-        translations = {}
+                st.write(f"Most similar page (similarity score: {similarity:.3f}):")
 
-    if benchmark_pages and translations:
-        page_index = st.number_input(f"Select benchmark page number (1 to {len(benchmark_pages)})", min_value=1, max_value=len(benchmark_pages), value=1)
-        benchmark_page_text = benchmark_pages[page_index - 1]
+                highlighted_source = highlight_differences(source_page_text, best_page_text)
+                highlighted_translation = highlight_differences(best_page_text, source_page_text)
 
-        # If source language file uploaded, use that page text instead of benchmark for source embedding
-        if source_lang_pages:
-            if len(source_lang_pages) >= page_index:
-                source_page_text = source_lang_pages[page_index - 1]
-            else:
-                source_page_text = benchmark_page_text
-        else:
-            source_page_text = benchmark_page_text
+                col1, col2 = st.columns(2)
 
-        source_emb = embed_text(embedder, [source_page_text])
+                with col1:
+                    st.markdown(f"### Benchmark page [{page_index}]:")
+                    st.markdown(highlighted_source, unsafe_allow_html=True)
 
-        # Highlight source terms in source page
-        highlighted_source = highlight_glossary_terms(source_page_text, glossary_source_terms, color="#ADD8E6")
+                with col2:
+                    st.markdown(f"### Translation page [{best_hit['corpus_id'] + 1}]:")
+                    st.markdown(highlighted_translation, unsafe_allow_html=True)
 
-        col1, col2 = st.columns(2)
-
-        with col1:
-            st.markdown(f"### Source page [{page_index}] with source glossary terms highlighted:")
-            st.markdown(highlighted_source, unsafe_allow_html=True)
-
-        for name, pages in translations.items():
-            translation_emb = embed_text(embedder, pages)
-            hits = semantic_search(source_emb, translation_emb, top_k=1)
-            best_hit = hits[0]
-            best_page_text = pages[best_hit['corpus_id']]
-            similarity = best_hit['score']
-
-            # Highlight translation terms in translation page
-            highlighted_translation = highlight_glossary_terms(best_page_text, glossary_translation_terms, color="#ADD8E6")
-
-            with col2:
-                st.markdown(f"### Benchmark page [{page_index}] & Translation: {name}")
-                st.markdown(f"### Most similar translation page [{best_hit['corpus_id'] + 1}] with translation glossary terms highlighted:")
-                st.markdown(highlighted_translation, unsafe_allow_html=True)
-                st.write(f"Similarity score: {similarity:.3f}")
-
-            if client:
-                with st.spinner("Evaluating translation quality..."):
-                    assessment = openai_quality_assessment(client, source_page_text, best_page_text)
-                st.markdown("**Quality Assessment:**")
-                st.write(assessment)
-            else:
-                st.info("OpenAI API key not provided. Showing similarity scores only.")
+                if client:
+                    with st.spinner("Evaluating translation quality..."):
+                        assessment = openai_quality_assessment(client, source_page_text, best_page_text)
+                    st.markdown("**Quality Assessment:**")
+                    st.write(assessment)
+                else:
+                    st.info("OpenAI API key not provided. Showing similarity scores only.")
 
 if __name__ == "__main__":
     main()
