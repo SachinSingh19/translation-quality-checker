@@ -1,6 +1,6 @@
 streamlit
 sentence-transformers
 openai
-PyPDF2
-python-docx
 pdfplumber
+python-docx
+difflib3
