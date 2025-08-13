@@ -1,11 +1,12 @@
-# Translation Quality Checker with Streamlit and Sentence Transformers
+# Translation Quality Checker
 
-This app allows you to upload a French source document and multiple translations, then compare specific chunks for translation quality using semantic similarity and OpenAI GPT.
+This Streamlit app compares translations of French documents using semantic similarity.
 
 ## Setup
 
-1. Clone the repo:
+1. Download the model files from [Hugging Face](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) and place them in `models/all-MiniLM-L6-v2`.
+
+2. Install dependencies:
 
 ```bash
-git clone https://github.com/yourusername/translation-quality-checker.git
-cd translation-quality-checker
+pip install streamlit sentence-transformers openai PyPDF2 python-docx
